@@ -1,0 +1,158 @@
+---
+title: "Transit_Hacks"
+author: "Zhixin Cao"
+date: "2025-04-26"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+# Install and load packages
+if (!require(sf)) install.packages("sf")
+if (!require(ggplot2)) install.packages("ggplot2")
+if (!require(ggspatial)) install.packages("ggspatial")
+
+library(sf)
+library(ggplot2)
+library(ggspatial)
+
+geo_data <- st_read("/Users/zhixincao/Downloads/railroad.geojson", quiet = FALSE)
+boundary_data <- st_read("/Users/zhixincao/Desktop/city_boundary.geojson") # Your boundary geojson
+
+# Make sure CRS matches
+if (st_crs(geo_data) != st_crs(boundary_data)) {
+  geo_data <- st_transform(geo_data, st_crs(boundary_data))
+}
+
+geo_data_clipped <- st_intersection(geo_data, boundary_data)
+
+# ------------------------
+# Step 3: Build background map
+# ------------------------
+
+# Get bounding box
+bbox <- st_bbox(boundary_data)
+
+# ------------------------
+# Step 4: Define colors manually
+# ------------------------
+
+my_colors <- c(
+  "ML" = "black",
+  "BR" = "saddlebrown",
+  "YL" = "yellow",
+  "GR" = "green",
+  "OR" = "orange",
+  "RD" = "red",
+  "BL" = "blue",
+  "PR" = "purple",
+  "PK" = "pink"
+)
+
+# ------------------------
+# Step 5: Create a white mask outside the boundary
+# ------------------------
+
+# ------------------------
+# Step 5: Create a white mask outside the boundary (fixed)
+# ------------------------
+
+# Extract bbox values
+xmin <- bbox["xmin"][[1]]
+ymin <- bbox["ymin"][[1]]
+xmax <- bbox["xmax"][[1]]
+ymax <- bbox["ymax"][[1]]
+
+# Make a big rectangle
+world_bbox <- st_as_sfc(st_bbox(c(
+  xmin = xmin - 0.5,
+  ymin = ymin - 0.5,
+  xmax = xmax + 0.5,
+  ymax = ymax + 0.5
+), crs = st_crs(boundary_data)))
+
+# Subtract the boundary to get mask
+mask_layer <- st_difference(world_bbox, boundary_data)
+
+
+# ------------------------
+# Step 6: Plot everything
+# ------------------------
+
+p <- ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +   # OpenStreetMap background
+  geom_sf(data = mask_layer, fill = "white", color = NA) +  # White mask over outside
+  geom_sf(data = boundary_data, fill = NA, color = "black", size = 1) +  # boundary outline
+  geom_sf(data = geo_data_clipped, aes(color = legend), size = 1) +  # colored lines
+  scale_color_manual(values = my_colors, name = "Line Colors") +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "br", which_north = "true",
+                          style = north_arrow_fancy_orienteering()) +
+  theme_minimal() +
+  coord_sf(expand = FALSE)
+
+print(p)
+
+```
+
+
+
+```{r cars}
+# Define your custom colors
+my_colors <- c(
+  "ML" = "black",
+  "BR" = "saddlebrown",
+  "YL" = "yellow",
+  "GR" = "green",
+  "OR" = "orange",
+  "RD" = "red",
+  "BL" = "blue",
+  "PR" = "purple",
+  "PK" = "pink"
+)
+
+# Define pretty legend labels
+pretty_labels <- c(
+  "ML" = "ML",
+  "BR" = "Brown Line",
+  "YL" = "Yellow Line",
+  "GR" = "Green Line",
+  "OR" = "Orange Line",
+  "RD" = "Red Line",
+  "BL" = "Blue Line",
+  "PR" = "Purple Line",
+  "PK" = "Pink Line"
+)
+
+# ------------------------
+# Plot
+# ------------------------
+
+p <- ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +   
+  geom_sf(data = mask_layer, fill = "white", color = NA) +  # White mask
+  geom_sf(data = boundary_data, fill = NA, color = "black", size = 1) +
+  geom_sf(data = geo_data_clipped, aes(color = legend), size = 1) +  
+  scale_color_manual(
+    values = my_colors,
+    name = "Transit Line",  # <-- new legend title
+    labels = pretty_labels   # <-- new pretty labels
+  ) +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "br", which_north = "true",
+                          style = north_arrow_fancy_orienteering()) +
+  theme_minimal() +
+  coord_sf(expand = FALSE)
+
+print(p)
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
