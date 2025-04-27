@@ -1,0 +1,723 @@
+---
+title: "Transit Hacks"
+author: "Dizhe Xia"
+date: "2025/3/12"
+format: 
+  pdf:
+    include-in-header: 
+       text: |
+         \usepackage{fvextra}
+         \DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,commandchars=\\\{\}}
+include-before-body:
+  text: |
+    \RecustomVerbatimEnvironment{verbatim}{Verbatim}{
+      showspaces = false,
+      showtabs = false,
+      breaksymbolleft={},
+      breaklines
+    }
+output:
+  echo: false
+  eval: true
+---
+
+# CTA Railine in Chicago Area
+
+```{python}
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import contextily as ctx
+
+# Load the CTA Rail Lines GeoJSON file
+gdf = gpd.read_file('CTA - \'L\' (Rail) Lines_20250426.geojson')
+
+# Load the Chicago City Boundary GeoJSON file
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Preview the data
+print(gdf.head())
+print(city_boundary.head())
+
+# Ensure both GeoDataFrames have CRS set to WGS84 (EPSG:4326)
+if gdf.crs is None:
+    gdf.set_crs(epsg=4326, inplace=True)
+if city_boundary.crs is None:
+    city_boundary.set_crs(epsg=4326, inplace=True)
+
+# Reproject both to Web Mercator (EPSG:3857) for OSM compatibility
+gdf = gdf.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Plot the Rail Lines and City Boundary with OpenStreetMap background
+fig, ax = plt.subplots(figsize=(12,12))
+
+# First plot the city boundary
+city_boundary.plot(ax=ax, edgecolor='black', facecolor='none', linewidth=2)
+
+# Then plot the CTA rail lines
+gdf.plot(ax=ax, linewidth=2, color='blue')
+
+# Add OpenStreetMap basemap
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+# Set map limits to the city boundary (optional but makes it cleaner)
+ax.set_xlim(city_boundary.total_bounds[0], city_boundary.total_bounds[2])
+ax.set_ylim(city_boundary.total_bounds[1], city_boundary.total_bounds[3])
+
+# Clean up the plot
+ax.set_title("Chicago CTA 'L' Rail Lines with Chicago City Boundary")
+ax.set_axis_off()
+plt.show()
+
+```
+
+# CTA Railine in Chicago Area
+
+```{python}
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import contextily as ctx
+from shapely.geometry import box
+
+# Load CTA Rail Lines GeoJSON
+gdf = gpd.read_file('CTA - \'L\' (Rail) Lines_20250426.geojson')
+
+# Load Chicago City Boundary GeoJSON
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+if gdf.crs is None:
+    gdf.set_crs(epsg=4326, inplace=True)
+if city_boundary.crs is None:
+    city_boundary.set_crs(epsg=4326, inplace=True)
+
+gdf = gdf.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Define line colors
+line_colors = {
+    'Red': 'red',
+    'Blue': 'blue',
+    'Brown': 'saddlebrown',
+    'Green': 'green',
+    'Orange': 'orange',
+    'Purple': 'purple',
+    'Pink': 'deeppink',
+    'Yellow': 'gold'
+}
+
+# Create a big white mask outside city boundary
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# Start plotting
+fig, ax = plt.subplots(figsize=(14, 12))
+
+# 1. Add OpenStreetMap basemap
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+# 2. Mask the outside area with white
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=2)
+
+# 3. Plot the city boundary
+city_boundary.plot(ax=ax, edgecolor='black', facecolor='none', linewidth=2, zorder=3)
+
+# 4. Plot CTA rail lines
+handles = []
+for line_name, color in line_colors.items():
+    subset = gdf[gdf['lines'].str.contains(line_name, case=False, na=False)]
+    if not subset.empty:
+        subset.plot(ax=ax, linewidth=2, color=color, zorder=4)
+        handles.append(mpatches.Patch(color=color, label=f"{line_name} Line"))
+
+# 5. Label each line once at a good place
+for line_name, color in line_colors.items():
+    subset = gdf[gdf['lines'].str.contains(line_name, case=False, na=False)]
+    if not subset.empty:
+        # pick the first geometry for labeling
+        centroid = subset.geometry.iloc[0].centroid
+        ax.text(centroid.x, centroid.y, f"{line_name} Line", fontsize=8, color=color, weight='bold')
+
+# Set map limits to city boundary
+buffer = 500  # meters
+minx, miny, maxx, maxy = city_boundary.total_bounds
+ax.set_xlim(minx - buffer, maxx + buffer)
+ax.set_ylim(miny - buffer, maxy + buffer)
+
+# 6. Move Legend outside right
+ax.legend(handles=handles, loc='center left', bbox_to_anchor=(1, 0.5), title="CTA Lines", fontsize='small')
+
+# Final polish
+ax.set_title("Chicago CTA 'L' Rail Lines with Clean Boundary Mask", fontsize=16)
+ax.set_axis_off()
+
+plt.tight_layout()
+plt.show()
+
+```
+
+# CTA Bus Route in Chicago Area
+
+```{python}
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import contextily as ctx
+from shapely.geometry import box
+
+# Load Bus Routes GeoJSON
+gdf = gpd.read_file('bus_route.geojson')
+
+# Load Chicago City Boundary GeoJSON
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+if gdf.crs is None:
+    gdf.set_crs(epsg=4326, inplace=True)
+if city_boundary.crs is None:
+    city_boundary.set_crs(epsg=4326, inplace=True)
+
+gdf = gdf.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Create a big world box
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# --- Start Plotting ---
+fig, ax = plt.subplots(figsize=(14, 12))
+
+# 1. Add OpenStreetMap basemap
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+# 2. Mask the outside area with white
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=2)
+
+# 3. Plot the city boundary
+city_boundary.plot(ax=ax, edgecolor='black', facecolor='none', linewidth=2, zorder=3)
+
+# 4. Plot all bus routes
+gdf.plot(ax=ax, linewidth=1, color='blue', alpha=0.7, zorder=4, label="Bus Routes")
+
+
+# Set map limits
+buffer = 500
+minx, miny, maxx, maxy = city_boundary.total_bounds
+ax.set_xlim(minx - buffer, maxx + buffer)
+ax.set_ylim(miny - buffer, maxy + buffer)
+
+# 6. Move Legend outside right
+bus_patch = mpatches.Patch(color='blue', label='Bus Routes')
+ax.legend(handles=[bus_patch], loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small', title="Legend")
+
+# Final polish
+ax.set_title("Chicago Bus Routes with Clean City Boundary Mask", fontsize=16)
+ax.set_axis_off()
+
+plt.tight_layout()
+plt.show()
+
+```
+
+# CTA bus route with dots
+
+```{python}
+
+# Load Bus Routes GeoJSON
+gdf_routes = gpd.read_file('bus_route.geojson')
+
+# Load Bus Stops GeoJSON
+gdf_stops = gpd.read_file('bus_stop.geojson')
+
+# Load Chicago City Boundary GeoJSON
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+if gdf_routes.crs is None:
+    gdf_routes.set_crs(epsg=4326, inplace=True)
+if gdf_stops.crs is None:
+    gdf_stops.set_crs(epsg=4326, inplace=True)
+if city_boundary.crs is None:
+    city_boundary.set_crs(epsg=4326, inplace=True)
+
+gdf_routes = gdf_routes.to_crs(epsg=3857)
+gdf_stops = gdf_stops.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Create a big world box
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# ----------------- #
+# Define important stops
+important_stops = [
+    'Union Station',
+    'UIC-Halsted',
+    'Midway Airport',
+    'Ogilvie Transportation Center',
+    'Northwestern Memorial Hospital'
+]
+
+# Check if stop_name column exists
+if 'stop_name' in gdf_stops.columns:
+    # Mark important vs regular stops
+    gdf_stops['is_important'] = gdf_stops['stop_name'].isin(important_stops)
+else:
+    # If no stop_name info, treat all as regular
+    gdf_stops['is_important'] = False
+
+# Check if route type column exists
+# For now assume all are regular buses
+gdf_stops['route_type'] = 'Local'
+
+# If your bus_stop data has a field like 'route' or 'route_type', you can customize here:
+# Example: if 'express' in route name, treat as Express Bus
+if 'route' in gdf_stops.columns:
+    gdf_stops['route_type'] = gdf_stops['route'].apply(lambda x: 'Express' if 'X' in str(x) else 'Local')
+
+# Set color mapping
+stop_color_mapping = {
+    'Local': 'red',
+    'Express': 'orange',
+    'BRT': 'purple'  # if you have BRT data
+}
+
+# ----------------- #
+# Start plotting
+fig, ax = plt.subplots(figsize=(14, 12))
+
+# 1. Add OpenStreetMap basemap
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+# 2. Mask the outside area with white
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=2)
+
+# 3. Plot the city boundary
+city_boundary.plot(ax=ax, edgecolor='black', facecolor='none', linewidth=2, zorder=3)
+
+# 4. Plot Bus Routes
+gdf_routes.plot(ax=ax, linewidth=1, color='blue', alpha=0.7, zorder=4, label="Bus Routes")
+
+# 5. Plot Bus Stops by category
+#   - Important stops: big dots
+#   - Regular stops: small dots
+for route_type, color in stop_color_mapping.items():
+    subset_regular = gdf_stops[(gdf_stops['route_type'] == route_type) & (~gdf_stops['is_important'])]
+    subset_important = gdf_stops[(gdf_stops['route_type'] == route_type) & (gdf_stops['is_important'])]
+
+    # Regular stops
+    subset_regular.plot(ax=ax, color=color, markersize=2, alpha=0.7, zorder=5, label=f"{route_type} Bus Stop")
+    
+    # Important stops
+    subset_important.plot(ax=ax, color=color, markersize=100, marker='*', alpha=1, zorder=6, label=f"Important {route_type} Stop")
+
+# Set map limits
+buffer = 500
+minx, miny, maxx, maxy = city_boundary.total_bounds
+ax.set_xlim(minx - buffer, maxx + buffer)
+ax.set_ylim(miny - buffer, maxy + buffer)
+
+# 6. Build legend
+route_patch = mpatches.Patch(color='blue', label='Bus Routes')
+local_patch = mpatches.Patch(color='red', label='Local Bus Stop')
+express_patch = mpatches.Patch(color='orange', label='Express Bus Stop')
+important_patch = mpatches.Patch(color='red', label='Important Bus Stop', alpha=1)
+
+ax.legend(handles=[route_patch, local_patch, express_patch], loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small', title="Legend")
+
+# Final polish
+ax.set_title("Chicago Bus Routes and Stops (Local/Express + Key Hubs Highlighted)", fontsize=16)
+ax.set_axis_off()
+
+plt.tight_layout()
+plt.show()
+
+```
+
+# Public Transportation in Chicago Area
+
+```{python}
+
+# Load datasets
+gdf_rail = gpd.read_file('CTA - \'L\' (Rail) Lines_20250426.geojson')
+gdf_routes = gpd.read_file('bus_route.geojson')
+gdf_stops = gpd.read_file('bus_stop.geojson')
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+for gdf in [gdf_rail, gdf_routes, gdf_stops, city_boundary]:
+    if gdf.crs is None:
+        gdf.set_crs(epsg=4326, inplace=True)
+
+gdf_rail = gdf_rail.to_crs(epsg=3857)
+gdf_routes = gdf_routes.to_crs(epsg=3857)
+gdf_stops = gdf_stops.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Create white mask for outside area
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# Define CTA Rail line colors
+rail_line_colors = {
+    'Red': 'red',
+    'Blue': 'blue',
+    'Brown': 'saddlebrown',
+    'Green': 'green',
+    'Orange': 'orange',
+    'Purple': 'purple',
+    'Pink': 'deeppink',
+    'Yellow': 'gold'
+}
+
+# Define bus stop color mapping
+stop_color_mapping = {
+    'Local': 'red',
+    'Express': 'orange',
+    'BRT': 'purple'
+}
+
+# Identify important bus stops (if available)
+important_stops = [
+    'Union Station',
+    'UIC-Halsted',
+    'Midway Airport',
+    'Ogilvie Transportation Center',
+    'Northwestern Memorial Hospital'
+]
+if 'stop_name' in gdf_stops.columns:
+    gdf_stops['is_important'] = gdf_stops['stop_name'].isin(important_stops)
+else:
+    gdf_stops['is_important'] = False
+
+# Default bus stop route type
+gdf_stops['route_type'] = 'Local'
+if 'route' in gdf_stops.columns:
+    gdf_stops['route_type'] = gdf_stops['route'].apply(lambda x: 'Express' if 'X' in str(x) else 'Local')
+
+# --- Start plotting ---
+fig, ax = plt.subplots(figsize=(14, 14))
+
+# Add OpenStreetMap basemap
+ctx.add_basemap(ax, source=ctx.providers.OpenStreetMap.Mapnik)
+
+# White mask outside city
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=1)
+
+# City boundary
+city_boundary.plot(ax=ax, edgecolor='black', facecolor='none', linewidth=2, zorder=2)
+
+# Plot Bus Routes
+gdf_routes.plot(ax=ax, linewidth=1, color='blue', alpha=0.5, zorder=3)
+
+# Plot CTA Rail Lines
+for line_name, color in rail_line_colors.items():
+    subset = gdf_rail[gdf_rail['lines'].str.contains(line_name, case=False, na=False)]
+    if not subset.empty:
+        subset.plot(ax=ax, linewidth=2, color=color, zorder=4, label=f"{line_name} Line")
+
+# Plot Bus Stops
+for route_type, color in stop_color_mapping.items():
+    subset_regular = gdf_stops[(gdf_stops['route_type'] == route_type) & (~gdf_stops['is_important'])]
+    subset_important = gdf_stops[(gdf_stops['route_type'] == route_type) & (gdf_stops['is_important'])]
+
+    # Regular stops
+    subset_regular.plot(ax=ax, color=color, markersize=2, alpha=0.7, zorder=5)
+    
+    # Important stops
+    subset_important.plot(ax=ax, color=color, markersize=30, marker='*', alpha=1, zorder=6)
+
+# Set map limits
+buffer = 500
+minx, miny, maxx, maxy = city_boundary.total_bounds
+ax.set_xlim(minx - buffer, maxx + buffer)
+ax.set_ylim(miny - buffer, maxy + buffer)
+
+# Build legend
+legend_elements = [
+    mpatches.Patch(color='blue', label='Bus Routes'),
+    mpatches.Patch(color='red', label='Local Bus Stop'),
+    mpatches.Patch(color='orange', label='Express Bus Stop')
+]
+for line_name, color in rail_line_colors.items():
+    legend_elements.append(mpatches.Patch(color=color, label=f"{line_name} Line"))
+
+ax.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small', title="Legend")
+
+# Title and polish
+ax.set_title("Chicago CTA 'L' Rail Lines + Bus Routes and Stops", fontsize=16)
+ax.set_axis_off()
+
+plt.tight_layout()
+plt.show()
+
+```
+
+```{python}
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import contextily as ctx
+from shapely.geometry import box
+from matplotlib_scalebar.scalebar import ScaleBar
+import numpy as np
+from scipy.spatial import cKDTree
+
+# Load datasets
+gdf_rail = gpd.read_file('CTA - \'L\' (Rail) Lines_20250426.geojson')
+gdf_routes = gpd.read_file('bus_route.geojson')
+gdf_stops = gpd.read_file('bus_stop.geojson')
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+for gdf in [gdf_rail, gdf_routes, gdf_stops, city_boundary]:
+    if gdf.crs is None:
+        gdf.set_crs(epsg=4326, inplace=True)
+
+gdf_rail = gdf_rail.to_crs(epsg=3857)
+gdf_routes = gdf_routes.to_crs(epsg=3857)
+gdf_stops = gdf_stops.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Create white mask for outside area
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# Define CTA Rail line colors
+rail_line_colors = {
+    'Red': 'red',
+    'Blue': 'royalblue',
+    'Brown': 'saddlebrown',
+    'Green': 'limegreen',
+    'Orange': 'darkorange',
+    'Purple': 'purple',
+    'Pink': 'deeppink',
+    'Yellow': 'gold'
+}
+
+# Define bus stop color mapping
+stop_color_mapping = {
+    'Local': 'white',
+    'Express': 'lightblue',
+    'BRT': 'violet'
+}
+
+# Mark important transit hubs
+important_stops = [
+    'Union Station',
+    'Ogilvie Transportation Center',
+    'Midway Airport',
+    'O\'Hare Airport',
+    'UIC-Halsted',
+    'Roosevelt'
+]
+
+if 'stop_name' in gdf_stops.columns:
+    gdf_stops['is_important'] = gdf_stops['stop_name'].isin(important_stops)
+else:
+    gdf_stops['is_important'] = False
+
+# Default bus stop route type
+gdf_stops['route_type'] = 'Local'
+if 'route' in gdf_stops.columns:
+    gdf_stops['route_type'] = gdf_stops['route'].apply(lambda x: 'Express' if 'X' in str(x) else 'Local')
+
+# --- Faster thinning using KDTree ---
+gdf_stops['x'] = gdf_stops.geometry.x
+gdf_stops['y'] = gdf_stops.geometry.y
+coords = np.vstack((gdf_stops['x'], gdf_stops['y'])).T
+
+tree = cKDTree(coords)
+mask_array = np.ones(len(gdf_stops), dtype=bool)
+
+for i, point in enumerate(coords):
+    if not mask_array[i]:
+        continue
+    idxs = tree.query_ball_point(point, r=200)
+    idxs.remove(i)
+    mask_array[idxs] = False
+
+gdf_stops_thinned = gdf_stops[mask_array]
+
+# --- Start plotting ---
+fig, ax = plt.subplots(figsize=(14, 14), dpi=300)
+
+# 1. Add professional dark background map
+ctx.add_basemap(ax, source=ctx.providers.CartoDB.DarkMatter)
+
+# 2. Mask outside city
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=1)
+
+# 3. City boundary (灰色虚线)
+city_boundary.plot(ax=ax, edgecolor='lightgray', facecolor='none', linewidth=1.5, linestyle='--', zorder=2)
+
+# 4. Plot Bus Routes (颜色稍深)
+gdf_routes.plot(ax=ax, linewidth=1, color='deepskyblue', alpha=0.8, zorder=3)
+
+# 5. Plot CTA Rail Lines
+for line_name, color in rail_line_colors.items():
+    subset = gdf_rail[gdf_rail['lines'].str.contains(line_name, case=False, na=False)]
+    if not subset.empty:
+        subset.plot(ax=ax, linewidth=3, color=color, zorder=4)
+        midpoint = subset.geometry.iloc[0].interpolate(0.5, normalized=True)
+        ax.text(midpoint.x, midpoint.y, f"{line_name}", fontsize=6, color=color,
+                weight='bold', rotation=0, ha='center', va='center', zorder=5)
+
+# 6. Plot Bus Stops (after thinning)
+for route_type, color in stop_color_mapping.items():
+    subset_regular = gdf_stops_thinned[(gdf_stops_thinned['route_type'] == route_type) & (~gdf_stops_thinned['is_important'])]
+    subset_regular.plot(ax=ax, color=color, markersize=2, alpha=0.7, zorder=5)
+
+# 7. Plot Important Hubs
+important_subset = gdf_stops_thinned[gdf_stops_thinned['is_important']]
+important_subset.plot(ax=ax, color='yellow', markersize=50, marker='*', alpha=1, zorder=6)
+
+# Add names for hubs
+for idx, row in important_subset.iterrows():
+    ax.annotate(row['stop_name'], (row.geometry.x, row.geometry.y),
+                xytext=(3, 3), textcoords="offset points",
+                fontsize=5, color='yellow', weight='bold')
+
+# Set map limits
+buffer = 500
+minx, miny, maxx, maxy = city_boundary.total_bounds
+ax.set_xlim(minx - buffer, maxx + buffer)
+ax.set_ylim(miny - buffer, maxy + buffer)
+
+# 8. Add clearer scale bar (单位公里)
+scalebar = ScaleBar(dx=1, units='km', location='lower right', 
+                    color='white', box_color='black', box_alpha=0.8, 
+                    length_fraction=0.15, scale_loc='bottom', font_properties={'size':8})
+ax.add_artist(scalebar)
+
+# 9. Add better north arrow
+x, y, arrow_length = 0.08, 0.88, 0.07  # 调整位置和大小
+ax.annotate('N', xy=(x, y), xytext=(x, y - arrow_length),
+            arrowprops=dict(facecolor='white', width=4, headwidth=12),
+            ha='center', va='center', fontsize=12, color='white', xycoords=ax.transAxes)
+
+# 10. Build final legend
+legend_elements = [
+    mpatches.Patch(color='deepskyblue', label='Bus Routes'),
+    mpatches.Patch(color='white', label='Local Bus Stop'),
+    mpatches.Patch(color='lightblue', label='Express Bus Stop'),
+    mpatches.Patch(color='yellow', label='Important Hub')
+]
+for line_name, color in rail_line_colors.items():
+    legend_elements.append(mpatches.Patch(color=color, label=f"{line_name} Line"))
+
+ax.legend(handles=legend_elements, loc='center left', bbox_to_anchor=(1, 0.5), fontsize='small', title="Legend", frameon=False)
+
+# Final polish
+ax.set_title("Chicago CTA Rail + Bus System (Final Professional Version)", fontsize=18, color='white', pad=20)
+ax.set_facecolor('black')
+ax.set_axis_off()
+
+# Save to PNG or PDF
+plt.tight_layout()
+plt.savefig('Chicago_Transit_Map_Final_Professional_Version.png', dpi=300, bbox_inches='tight', facecolor='black')
+plt.savefig('Chicago_Transit_Map_Final_Professional_Version.pdf', dpi=300, bbox_inches='tight', facecolor='black')
+
+plt.show()
+
+
+```
+
+# Public Transporation Site Suitability Analysis
+
+```{python}
+
+import geopandas as gpd
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
+import contextily as ctx
+import numpy as np
+from shapely.geometry import box
+from scipy.stats import gaussian_kde
+
+# Load datasets
+gdf_rail = gpd.read_file('CTA - \'L\' (Rail) Lines_20250426.geojson')
+gdf_routes = gpd.read_file('bus_route.geojson')
+gdf_stops = gpd.read_file('bus_stop.geojson')
+city_boundary = gpd.read_file('city_boundary.geojson')
+
+# Ensure CRS
+for gdf in [gdf_rail, gdf_routes, gdf_stops, city_boundary]:
+    if gdf.crs is None:
+        gdf.set_crs(epsg=4326, inplace=True)
+
+gdf_rail = gdf_rail.to_crs(epsg=3857)
+gdf_routes = gdf_routes.to_crs(epsg=3857)
+gdf_stops = gdf_stops.to_crs(epsg=3857)
+city_boundary = city_boundary.to_crs(epsg=3857)
+
+# Create mask for outside area
+world = gpd.GeoDataFrame(geometry=[box(-1e7, -1e7, 1e7, 1e7)], crs="EPSG:3857")
+mask = gpd.overlay(world, city_boundary, how='difference')
+
+# --- Settings ---
+buffer_distance = 100  # meters
+
+# --- Build buffer ---
+buffer_routes = gdf_routes.buffer(buffer_distance)
+buffer_rail = gdf_rail.buffer(buffer_distance)
+buffer_zone = gpd.GeoSeries(buffer_routes.union(buffer_rail))
+
+# --- Filter points ---
+stops_in_buffer = gdf_stops[gdf_stops.geometry.within(buffer_zone.unary_union)]
+rail_midpoints = gdf_rail.geometry.interpolate(0.5, normalized=True)
+rail_in_buffer = rail_midpoints[rail_midpoints.within(buffer_zone.unary_union)]
+
+# --- Combine points ---
+bus_coords = np.vstack((stops_in_buffer.geometry.x.values, stops_in_buffer.geometry.y.values))
+rail_coords = np.vstack((rail_in_buffer.x.values, rail_in_buffer.y.values))
+all_points = np.hstack((bus_coords, rail_coords))  # (2, N)
+
+# --- KDE ---
+kde = gaussian_kde(all_points)
+xmin, ymin, xmax, ymax = city_boundary.total_bounds
+X, Y = np.mgrid[xmin:xmax:500j, ymin:ymax:500j]
+positions = np.vstack([X.ravel(), Y.ravel()])
+Z = np.reshape(kde(positions).T, X.shape)
+
+# --- Color Setup (Reverse Color) ---
+cmap = plt.cm.hot_r  # 使用反转后的hot_r
+bounds = np.linspace(Z.min(), Z.max(), 11)  # 10段
+norm = mcolors.BoundaryNorm(boundaries=bounds, ncolors=cmap.N)
+
+# --- Plot ---
+fig, ax = plt.subplots(figsize=(14, 14), dpi=300)
+ctx.add_basemap(ax, source=ctx.providers.CartoDB.DarkMatter)
+
+heatmap = ax.imshow(np.rot90(Z), cmap=cmap, extent=[xmin, xmax, ymin, ymax], 
+                    alpha=0.6, norm=norm, zorder=3)
+
+mask.plot(ax=ax, color='white', edgecolor='none', zorder=4)
+city_boundary.plot(ax=ax, edgecolor='lightgray', facecolor='none', linewidth=2, linestyle='--', zorder=5)
+gpd.GeoDataFrame(geometry=buffer_zone, crs="EPSG:3857").boundary.plot(ax=ax, edgecolor='cyan', linewidth=1, linestyle='--', zorder=6)
+
+ax.set_xlim(xmin, xmax)
+ax.set_ylim(ymin, ymax)
+
+# Title
+ax.set_title("Chicago Transit Coverage Heatmap (100m Buffer, 10-Level, Darker High-Density)", fontsize=18, color='white', pad=20)
+
+# Colorbar
+cbar = plt.colorbar(heatmap, ax=ax, fraction=0.036, pad=0.04, ticks=bounds)
+cbar.set_label('Transit Coverage Density', fontsize=10, color='white')
+cbar.ax.yaxis.set_tick_params(color='white')
+plt.setp(plt.getp(cbar.ax.axes, 'yticklabels'), color='white')
+
+ax.set_axis_off()
+ax.set_facecolor('black')
+
+plt.tight_layout()
+plt.savefig('Chicago_Transit_Heatmap_100m_Reversed.png', dpi=300, bbox_inches='tight', facecolor='black')
+plt.savefig('Chicago_Transit_Heatmap_100m_Reversed.pdf', dpi=300, bbox_inches='tight', facecolor='black')
+
+plt.show()
+
+```
