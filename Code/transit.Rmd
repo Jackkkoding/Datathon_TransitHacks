@@ -147,12 +147,1550 @@ print(p)
 
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
+Heat Map for dwelling time 
 
 ```{r pressure, echo=FALSE}
-plot(pressure)
+# Uncomment if you haven't installed them yet:
+# install.packages(c("sf", "dplyr", "rosm", "ggplot2"))
+
+library(sf)
+library(dplyr)
+library(rosm)       # for fetching OSM tiles
+library(ggplot2)
+# ----------------------------------------------------------------------
+# Step A. Read CSV
+# ----------------------------------------------------------------------
+# Replace "congestion.csv" with your actual file or path
+# Replace "my_data.csv" with your actual file path or URL
+congestion <- read.csv("/Users/zhixincao/Downloads/Chicago_Traffic_Tracker_-_Congestion_Estimates_by_Segments.csv", stringsAsFactors = FALSE)
+
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+```{r}
+
+# Convert columns to numeric
+congestion$START_LONGITUDE <- as.numeric(congestion$START_LONGITUDE)
+congestion$START_LATITUDE  <- as.numeric(congestion$START_LATITUDE)
+congestion$END_LONGITUDE   <- as.numeric(congestion$END_LONGITUDE)
+congestion$END_LATITUDE    <- as.numeric(congestion$END_LATITUDE)
+congestion$CURRENT_SPEED   <- as.numeric(congestion$CURRENT_SPEED)
+
+# Filter out invalid coords (beyond lat ±90 / lon ±180 or missing)
+congestion <- congestion %>%
+  filter(
+    !is.na(START_LONGITUDE), !is.na(START_LATITUDE),
+    !is.na(END_LONGITUDE),   !is.na(END_LATITUDE),
+    START_LONGITUDE >= -180 & START_LONGITUDE <= 180,
+    END_LONGITUDE   >= -180 & END_LONGITUDE   <= 180,
+    START_LATITUDE  >= -90  & START_LATITUDE  <= 90,
+    END_LATITUDE    >= -90  & END_LATITUDE    <= 90
+  )
+
+# Optionally, replace -1 with 0.1
+congestion$CURRENT_SPEED[congestion$CURRENT_SPEED == -1] <- 0.1
+
+```
+
+```{r}
+congestion_lines <- congestion %>%
+  rowwise() %>%
+  mutate(
+    geometry = st_sfc(
+      st_linestring(rbind(
+        c(START_LONGITUDE, START_LATITUDE),
+        c(END_LONGITUDE,   END_LATITUDE)
+      )),
+      crs = 4326  # lat-lon WGS84
+    )
+  ) %>%
+  ungroup() %>%
+  st_as_sf()  # Now an sf object
+```
+
+```{r}
+# Define a color palette from white (low) to red (high)
+pal <- colorNumeric(
+  palette = c("white", "red"),
+  domain  = congestion_lines$CURRENT_SPEED,
+  na.color = "transparent"
+)
+
+# Build the leaflet map
+m <- leaflet(congestion_lines) %>%
+  
+  # 1. Add an OpenStreetMap tile layer
+  addProviderTiles("OpenStreetMap") %>%
+  
+  # 2. Add the line geometries, colored by CURRENT_SPEED
+  addPolylines(
+    color     = ~pal(CURRENT_SPEED),
+    weight    = 4,    # line thickness
+    opacity   = 1
+  ) %>%
+  
+  # 3. Add a legend
+  addLegend(
+    pal      = pal,
+    values   = ~CURRENT_SPEED,
+    position = "bottomright",
+    title    = "Current Speed"
+  ) %>%
+  
+  # 4. Automatically fit the map to all lines
+  fitBounds(
+    lng1 = st_bbox(congestion_lines)$xmin,
+    lat1 = st_bbox(congestion_lines)$ymin,
+    lng2 = st_bbox(congestion_lines)$xmax,
+    lat2 = st_bbox(congestion_lines)$ymax
+  )
+
+# Display the map (in RStudio Viewer or browser)
+m
+```
+
+
+
+
+```{r}
+# -----------------------------------------------------------
+# 0.  One-time package install  (uncomment if needed)
+# -----------------------------------------------------------
+# install.packages(c("sf", "dplyr"))
+
+library(sf)
+library(dplyr)
+
+
+# -----------------------------------------------------------
+# 2.  Basic cleaning
+#     • make sure the coord & speed columns are numeric
+#     • drop rows with missing / out-of-range coordinates
+# -----------------------------------------------------------
+num_cols <- c("START_LONGITUDE", "START_LATITUDE",
+              "END_LONGITUDE",   "END_LATITUDE",
+              "CURRENT_SPEED")
+
+congestion[num_cols] <- lapply(congestion[num_cols], as.numeric)
+
+congestion <- congestion %>%
+  filter(
+    !is.na(START_LONGITUDE) & START_LONGITUDE >= -180 & START_LONGITUDE <= 180,
+    !is.na(END_LONGITUDE)   & END_LONGITUDE   >= -180 & END_LONGITUDE   <= 180,
+    !is.na(START_LATITUDE)  & START_LATITUDE  >=  -90 & START_LATITUDE  <=  90,
+    !is.na(END_LATITUDE)    & END_LATITUDE    >=  -90 & END_LATITUDE    <=  90
+  )
+
+# OPTIONAL ─ replace –1 speeds with 0.1
+congestion$CURRENT_SPEED[congestion$CURRENT_SPEED == -1] <- 0.1
+
+# -----------------------------------------------------------
+# 3.  Build LINESTRING geometries in EPSG:4326 (lat/lon)
+# -----------------------------------------------------------
+congestion_lines <- congestion %>%
+  rowwise() %>%
+  mutate(
+    geometry = st_sfc(
+      st_linestring(rbind(
+        c(START_LONGITUDE, START_LATITUDE),
+        c(END_LONGITUDE,   END_LATITUDE)
+      )),
+      crs = 4326  # WGS-84
+    )
+  ) %>%
+  ungroup() %>%
+  st_as_sf() %>%                     # becomes an sf object
+  select(speed = CURRENT_SPEED)      # retain just the speed field
+
+# -----------------------------------------------------------
+# 4.  Write to GeoJSON  ── produces a single file
+# -----------------------------------------------------------
+st_write(
+  obj    = congestion_lines,
+  dsn    = "congestion_lines.geojson",
+  driver = "GeoJSON",
+  delete_dsn = TRUE                 # overwrite if the file exists
+)
+
+cat("GeoJSON saved to congestion_lines.geojson\n")
+```
+```{r}
+# ------------------------------------------------------------
+# 0.  Packages  (install once if needed)
+# ------------------------------------------------------------
+# install.packages(c("sf", "ggplot2"))
+library(sf)
+library(ggplot2)
+
+# ------------------------------------------------------------
+# A. Read the GeoJSON you created earlier
+# ------------------------------------------------------------
+lines <- st_read("congestion_lines.geojson", quiet = TRUE)
+
+# ------------------------------------------------------------
+# B. Re-project to Web-Mercator so buffer is in metres
+# ------------------------------------------------------------
+lines_3857 <- st_transform(lines, 3857)   # EPSG:3857 (metres)
+
+# ------------------------------------------------------------
+# C. Buffer each line so the map looks “thick” / 浓一点
+#    • 15 metres on each side  →  total width ≈ 30 m
+#    • Increase buf_dist for an even “fatter” look
+# ------------------------------------------------------------
+buf_dist <- 15    # metres
+lines_buf <- st_buffer(lines_3857, dist = buf_dist)
+
+# ------------------------------------------------------------
+# D. Plot – static heat-map  (white ⇒ red)
+# ------------------------------------------------------------
+p <- ggplot() +
+  geom_sf(
+    data   = lines_buf,
+    aes(fill = speed),   # "speed" came from the export script
+    color  = NA          # no polygon border for a cleaner fill
+  ) +
+  scale_fill_gradient(
+    low  = "white",
+    high = "#b30000",    # deep red; tweak if desired
+    name = "Speed"
+  ) +
+  theme_void() +         # remove axes / grid
+  labs(title = "Street-level Speed Heat Map (white → red)")
+
+# ------------------------------------------------------------
+# E. Save as PNG
+# ------------------------------------------------------------
+ggsave(
+  filename = "heatmap_speed.png",
+  plot     = p,
+  width    = 1600/150,   # inches = pixels ÷ dpi
+  height   = 1200/150,
+  dpi      = 150
+)
+
+cat("\n✓  Saved static heat-map to  heatmap_speed.png\n")
+```
+
+```{r}
+# ------------------------------------------------------------
+# 0. 依赖（如已安装可跳过）
+# ------------------------------------------------------------
+# install.packages(c("sf", "ggplot2"))
+
+library(sf)
+library(ggplot2)
+
+# ------------------------------------------------------------
+# 1. 读取上一步生成的 GeoJSON
+# ------------------------------------------------------------
+lines <- st_read("congestion_lines.geojson", quiet = TRUE)  # 带 speed 字段
+
+# ------------------------------------------------------------
+# 2. 投影到米制坐标系，方便按米缓冲
+# ------------------------------------------------------------
+lines_3857 <- st_transform(lines, 3857)  # Web-Mercator
+
+# ------------------------------------------------------------
+# 3. “摊开来”：两侧各 buffer 30 m  →  整体宽约 60 m
+#    想更粗就把 buf_dist 改大（如 50、80…）
+# ------------------------------------------------------------
+buf_dist <- 30   # 米（两侧）
+lines_buf <- st_buffer(lines_3857, dist = buf_dist)
+
+# ------------------------------------------------------------
+# 4. 画静态热力图（白 → 深红），再导出 PNG
+# ------------------------------------------------------------
+p <- ggplot() +
+  geom_sf(data = lines_buf,
+          aes(fill = speed),    # speed 来自 GeoJSON
+          colour = NA) +        # 取消描边，纯填充
+  scale_fill_gradient(
+    low  = "white",
+    high = "#b20000",          # 深红，可自行调整
+    name = "Speed"
+  ) +
+  theme_void(base_family = "Helvetica") +
+  theme(
+    plot.background   = element_rect(fill = "white", colour = NA),
+    legend.position   = "right"
+  ) +
+  labs(title = "Street-level Speed Heat Map (white→red)")
+
+# 保存为高分辨率 PNG
+ggsave("heatmap_speed_wide.png",
+       plot   = p,
+       width  = 1600/150,   # 宽=1600px, 150dpi
+       height = 1200/150,   # 高=1200px
+       dpi    = 150)
+
+cat("✓  导出完成：heatmap_speed_wide.png\n")
+```
+
+```{r}
+# ──────────────────────────────────────────────────────────────
+# 0.  Packages  (install once if missing)
+# ──────────────────────────────────────────────────────────────
+# install.packages(c("sf", "ggplot2", "ggspatial", "dplyr"))
+library(sf)
+library(ggplot2)
+library(ggspatial)
+library(dplyr)
+
+# ──────────────────────────────────────────────────────────────
+# 1.  Read the two GeoJSONs
+# ──────────────────────────────────────────────────────────────
+
+lines_raw     <- lines
+
+# make sure crs matches
+if (st_crs(lines_raw) != st_crs(boundary_data)) {
+  lines_raw <- st_transform(lines_raw, st_crs(boundary_data))
+}
+
+# ──────────────────────────────────────────────────────────────
+# 2.  Clip lines to boundary  (saves time & avoids stray buffers)
+# ──────────────────────────────────────────────────────────────
+lines_clip <- st_intersection(lines_raw, boundary_data)
+
+# ──────────────────────────────────────────────────────────────
+# 3.  Buffer lines so they look like thick “ribbons”
+#     • project to metres → buffer 25 m → back to original CRS
+# ──────────────────────────────────────────────────────────────
+buf_dist        <- 25                                     # 25 m each side
+lines_clip_3857 <- st_transform(lines_clip, 3857)         # Web-Mercator
+lines_buf_3857  <- st_buffer(lines_clip_3857, buf_dist)
+lines_buf       <- st_transform(lines_buf_3857, st_crs(boundary_data))
+
+# ──────────────────────────────────────────────────────────────
+# 4.  Create a white mask outside the boundary  (robust version)
+# ──────────────────────────────────────────────────────────────
+
+# 4a.  Ensure the boundary geometry itself is valid & non-empty
+if (any(!st_is_valid(boundary_data))) {
+  boundary_data <- st_make_valid(boundary_data)
+}
+if (nrow(boundary_data) == 0) {
+  stop("Boundary geometry is empty — cannot build mask.")
+}
+
+# 4b.  Build a 'world' polygon = boundary + 2-km buffer all around
+#      (distance is in the boundary CRS; if geographic degrees,
+#       you can switch to metres via st_transform first)
+buffer_dist <- if (st_is_longlat(boundary_data)) 0.02 else 2000  # ≈ 2 km
+world_bbox  <- st_buffer(st_union(boundary_data), dist = buffer_dist)
+
+# 4c.  Mask = world_bbox  minus  boundary
+mask_layer  <- st_difference(world_bbox, st_union(boundary_data))
+
+
+# ──────────────────────────────────────────────────────────────
+# 5.  Build the static heat-map
+# ──────────────────────────────────────────────────────────────
+p <- ggplot() +
+  # OSM raster background
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  
+  # White-out outside the city
+  geom_sf(data = mask_layer, fill = "white", colour = NA) +
+  
+  # Buffered ribbons coloured by speed
+  geom_sf(data = lines_buf,
+          aes(fill = speed),
+          colour = NA) +
+  
+  # Heat palette: white → deep red
+  scale_fill_gradient(
+    low  = "white",
+    high = "#b30000",
+    name = "Speed"
+  ) +
+  
+  # Optional: draw the city outline
+  geom_sf(data = boundary_data, fill = NA, colour = "black", linewidth = .6) +
+  
+  annotation_scale(location = "bl", width_hint = .3) +
+  annotation_north_arrow(location = "br",
+                         which_north = "true",
+                         style = north_arrow_fancy_orienteering) +
+  
+  coord_sf(expand = FALSE) +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    legend.position = "right"
+  ) +
+  labs(title = "Street-level Speed Heat-Map (White → Red)")
+
+# ──────────────────────────────────────────────────────────────
+# 6.  Save high-resolution PNG
+# ──────────────────────────────────────────────────────────────
+ggsave("city_speed_heatmap.png",
+       plot   = p,
+       width  = 12,       # inches
+       height = 9,
+       dpi    = 300)
+
+cat("✓  Static map saved to city_speed_heatmap.png\n")
+```
+
+```{r}
+# ── tweak parameters here ───────────────────────────────
+buf_dist <- 50                       # 50 m each side  ⇒  100 m wide ribbons
+heat_pal <- c("#00ff00", "#ffff00", "#d60000")   # G  →  Y  →  R
+# ─────────────────────────────────────────────────────────
+
+# 1 · buffer   (use new buf_dist)  ----
+lines_clip_3857 <- st_transform(lines_clip, 3857)
+lines_buf_3857  <- st_buffer(lines_clip_3857, buf_dist)
+lines_buf       <- st_transform(lines_buf_3857, st_crs(boundary_data))
+
+# 2 · plot  ----
+p <- ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  geom_sf(data = mask_layer, fill = "white", colour = NA) +
+  geom_sf(data = lines_buf, aes(fill = speed), colour = NA, alpha = 0.85) +
+  scale_fill_gradientn(colours = heat_pal, name = "Speed") +
+  geom_sf(data = boundary_data, fill = NA, colour = "black", linewidth = .6) +
+  annotation_scale(location = "bl", width_hint = .3) +
+  annotation_north_arrow(location = "br",
+                         which_north = "true",
+                         style = north_arrow_fancy_orienteering) +
+  coord_sf(expand = FALSE) +
+  theme_void() +
+  theme(
+    plot.background = element_rect(fill = "white", colour = NA),
+    legend.position = "right"
+  ) +
+  labs(title = "Street-level Speed Heat-Map (Green → Yellow → Red)")
+
+ggsave("city_speed_heatmap.png", p, width = 12, height = 9, dpi = 300)
+```
+
+
+```{r}
+# --------------------------------------------------------
+# 0. Load required packages
+# --------------------------------------------------------
+# install.packages(c("sf", "terra", "gstat", "ggplot2", "ggspatial"))
+library(sf)
+library(terra)
+library(gstat)
+library(ggplot2)
+library(ggspatial)
+
+# --------------------------------------------------------
+# 1. Read boundary and congestion lines
+# --------------------------------------------------------
+boundary <- boundary_data  # you already have this loaded
+streets  <- st_read("/Users/zhixincao/Desktop/congestion_lines.geojson", quiet = TRUE)
+
+# --------------------------------------------------------
+# 2. CRS harmonization (very important)
+# --------------------------------------------------------
+if (!st_crs(streets) == st_crs(boundary)) {
+  streets <- st_transform(streets, st_crs(boundary))
+}
+
+# --------------------------------------------------------
+# 3. Clip streets to boundary
+# --------------------------------------------------------
+streets_clip <- st_intersection(streets, boundary)
+
+# --------------------------------------------------------
+# 4. Safely extract only LINESTRING or MULTILINESTRING
+# --------------------------------------------------------
+if (any(st_geometry_type(streets_clip) == "LINESTRING")) {
+  streets_clip <- st_collection_extract(streets_clip, "LINESTRING")
+} else if (any(st_geometry_type(streets_clip) == "MULTILINESTRING")) {
+  streets_clip <- st_collection_extract(streets_clip, "MULTILINESTRING")
+  streets_clip <- st_cast(streets_clip, "LINESTRING")
+} else {
+  stop("❌ ERROR: After clipping, no LINESTRING or MULTILINESTRING left!")
+}
+cat("✓ After extraction, number of street segments:", nrow(streets_clip), "\n")
+
+# 5. Densify (sample points every ~20 meters)
+seg_length <- 20  # meters
+
+# Project to EPSG:3857 (meters) for correct sampling
+streets_clip_3857 <- st_transform(streets_clip, 3857)
+
+# ⚡ Clean bad geometries: remove empty, non-lines
+streets_clip_3857 <- streets_clip_3857 %>%
+  filter(!st_is_empty(geometry)) %>%
+  filter(st_geometry_type(geometry) == "LINESTRING")
+
+# Now safe to sample
+sample_pts_geom <- st_line_sample(st_geometry(streets_clip_3857), density = 1/seg_length)
+sample_pts <- st_sf(geometry = sample_pts_geom)
+sample_pts <- st_transform(sample_pts, st_crs(boundary))  # back to lat/lon
+
+# --------------------------------------------------------
+# 6. Attach speed to each sampled point
+# --------------------------------------------------------
+sample_pts$speed <- streets_clip$speed[st_nearest_feature(sample_pts, streets_clip)]
+
+# --------------------------------------------------------
+# 7. Interpolate points to raster (IDW)
+# --------------------------------------------------------
+# Create raster grid
+bbox   <- st_bbox(boundary)
+res_m  <- 50  # Raster resolution: 50 meters
+
+rast_template <- rast(
+  xmin = bbox["xmin"], xmax = bbox["xmax"],
+  ymin = bbox["ymin"], ymax = bbox["ymax"],
+  resolution = res_m,
+  crs = st_crs(boundary)$wkt
+)
+
+# IDW interpolation
+idp <- 2  # IDW power
+gstat_model <- gstat::gstat(formula = speed ~ 1, locations = as(sample_pts, "Spatial"), nmax = 10, set = list(idp = idp))
+speed_raster <- predict(gstat_model, newdata = as(rast_template, "SpatialPixelsDataFrame"))
+speed_raster <- rast(speed_raster)
+names(speed_raster) <- "speed"
+
+# --------------------------------------------------------
+# 8. Mask raster to city boundary
+# --------------------------------------------------------
+speed_masked <- mask(speed_raster, vect(boundary))
+
+# --------------------------------------------------------
+# 9. Prepare raster for ggplot
+# --------------------------------------------------------
+df_raster <- as.data.frame(speed_masked, xy = TRUE, na.rm = TRUE)
+
+# Define Green → Yellow → Red color palette
+heat_palette <- colorRampPalette(c("#00FF00", "#FFFF00", "#FF0000"))
+
+# --------------------------------------------------------
+# 10. Plot the static heatmap with OSM background
+# --------------------------------------------------------
+p <- ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +
+  geom_raster(data = df_raster, aes(x = x, y = y, fill = speed), alpha = 0.7) +
+  scale_fill_gradientn(colours = heat_palette(10), name = "Speed") +
+  geom_sf(data = boundary, fill = NA, colour = "black", linewidth = 0.6) +
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "br",
+                         which_north = "true",
+                         style = north_arrow_fancy_orienteering) +
+  coord_sf(expand = FALSE) +
+  theme_void() +
+  labs(title = "Street-level Speed Heat Surface (Green → Yellow → Red)")
+
+# --------------------------------------------------------
+# 11. Save the final map
+# --------------------------------------------------------
+ggsave("city_speed_heat_raster.png",
+       plot   = p,
+       width  = 12, height = 9, dpi = 300)
+
+cat("\n✅ Finished! Static heatmap saved as: city_speed_heat_raster.png\n")
+
+```
+```{r}
+# --------------------------------------------------------
+# 0. Load packages
+# --------------------------------------------------------
+# install.packages(c("sf", "ggplot2", "ggspatial", "dplyr"))
+library(sf)
+library(ggplot2)
+library(ggspatial)
+library(dplyr)
+
+# --------------------------------------------------------
+# 1. Read your boundary and CSV
+# --------------------------------------------------------
+
+# Assuming boundary_data is already loaded in your session:
+boundary <- boundary_data
+
+# Read your uploaded CSV
+traffic_data <- read.csv("/Users/zhixincao/Downloads/Average_Daily_Traffic_Counts.csv")
+
+# --------------------------------------------------------
+# 2. Convert traffic CSV into POINT sf
+# --------------------------------------------------------
+
+# Assuming your CSV has LATITUDE and LONGITUDE columns
+# If columns have different names, adjust them below
+traffic_points <- st_as_sf(traffic_data,
+                           coords = c("Longitude", "Latitude"),
+                           crs = 4326)   # WGS84 lat-lon
+
+# --------------------------------------------------------
+# 3. Make sure CRS matches boundary
+# --------------------------------------------------------
+
+if (!st_crs(traffic_points) == st_crs(boundary)) {
+  traffic_points <- st_transform(traffic_points, st_crs(boundary))
+}
+
+# --------------------------------------------------------
+# 4. Clip points to boundary
+# --------------------------------------------------------
+
+traffic_points_clip <- st_intersection(traffic_points, boundary)
+
+# --------------------------------------------------------
+# 5. Plot Bubble Map with OSM background
+# --------------------------------------------------------
+
+p <- ggplot() +
+  annotation_map_tile(type = "osm", zoomin = 0) +         # OSM tiles
+  geom_sf(data = boundary, fill = NA, color = "black", size = 0.8) +  # boundary outline
+  geom_sf(data = traffic_points_clip,
+          aes(size = Total.Passing.Vehicle.Volume),       # adjust this field name if necessary
+          color = "red", alpha = 0.5) +                   # semi-transparent red bubbles
+  scale_size_continuous(range = c(1, 10), name = "Vehicle Volume") + # bubble size scale
+  annotation_scale(location = "bl", width_hint = 0.3) +
+  annotation_north_arrow(location = "br",
+                         which_north = "true",
+                         style = north_arrow_fancy_orienteering) +
+  coord_sf(expand = FALSE) +
+  theme_minimal() +
+  labs(title = "Traffic Volume Bubble Map")
+
+# --------------------------------------------------------
+# 6. Save the Map
+# --------------------------------------------------------
+
+ggsave("traffic_volume_bubble_map.png",
+       plot   = p,
+       width  = 12, height = 9, dpi = 300)
+
+cat("\n✅ Bubble Map saved: traffic_volume_bubble_map.png\n")
+```
+```{r}
+# --------------------------------------------------------
+# 0. Load required packages
+# --------------------------------------------------------
+# install.packages(c("sf", "dplyr", "ggplot2"))
+library(sf)
+library(dplyr)
+library(ggplot2)
+
+# --------------------------------------------------------
+# 1. Read your traffic CSV and ZIP code GeoJSON
+# --------------------------------------------------------
+zip_codes <- st_read("/Users/zhixincao/Downloads/zip_code.geojson", quiet = TRUE)
+# --------------------------------------------------------
+# 2. Convert traffic CSV into POINTS
+# --------------------------------------------------------
+
+traffic_points <- st_as_sf(traffic_data,
+                           coords = c("Longitude", "Latitude"),  # NOTE capital L!
+                           crs = 4326)
+
+# --------------------------------------------------------
+# 3. CRS harmonization
+# --------------------------------------------------------
+
+if (!st_crs(traffic_points) == st_crs(zip_codes)) {
+  traffic_points <- st_transform(traffic_points, st_crs(zip_codes))
+}
+
+# --------------------------------------------------------
+# 4. Spatial join: assign each point to a ZIP
+# --------------------------------------------------------
+
+traffic_with_zip <- st_join(traffic_points, zip_codes, left = FALSE)
+
+# --------------------------------------------------------
+# 5. Aggregate: sum "Total Passing Vehicle Volume" by ZIP
+# --------------------------------------------------------
+
+aggregated_volume <- traffic_with_zip %>%
+  st_drop_geometry() %>% 
+  group_by(zip) %>%    # ← use "zip" here, lowercase
+  summarise(Total_Volume = sum(Total.Passing.Vehicle.Volume, na.rm = TRUE))
+
+# --------------------------------------------------------
+# 6. Merge back to ZIP polygons
+# --------------------------------------------------------
+
+zip_with_volume <- zip_codes %>%
+  left_join(aggregated_volume, by = "zip")  # join by "zip" field
+
+# --------------------------------------------------------
+# 7. Plot: total volume by ZIP
+# --------------------------------------------------------
+
+p <- ggplot() +
+  geom_sf(data = zip_with_volume, aes(fill = Total_Volume), color = "white") +
+  scale_fill_viridis_c(option = "C", name = "Total Vehicle Volume", na.value = "lightgrey") +
+  theme_minimal() +
+  labs(title = "Total Traffic Volume Aggregated by ZIP Code")
+
+# Save the plot
+ggsave("zip_traffic_volume_map.png",
+       plot = p,
+       width = 12, height = 9, dpi = 300)
+
+cat("\n✅ Map saved as: zip_traffic_volume_map.png\n")
+
+```
+
+```{r}
+# --------------------------------------------------------
+# 0. Load required packages
+# --------------------------------------------------------
+# install.packages(c("dplyr", "readr"))
+library(dplyr)
+library(readr)
+
+# --------------------------------------------------------
+# 1. Read the demographics CSV
+# --------------------------------------------------------
+
+# Read the CSV file
+demographics_data <- read_csv("/Users/zhixincao/Desktop/chicago_demographics_summary.csv")
+
+# --------------------------------------------------------
+# 2. Inspect the data
+# --------------------------------------------------------
+
+# Check the first few rows
+head(demographics_data)
+
+# Check column names
+colnames(demographics_data)
+
+# Quick summary
+summary(demographics_data)
+```
+```{r}
+##############################################################################
+# 0.  Load packages (install first time with install.packages("sf", "dplyr"))
+##############################################################################
+library(sf)
+library(dplyr)
+
+##############################################################################
+# 1.  Drop geometry from demographics_data_1  ────────────────────────────────
+##############################################################################
+demographics_attrs <- demographics_data_1 |>
+  st_drop_geometry()                        # strips the geometry column
+
+##############################################################################
+# 2.  Ensure join keys match & keep leading zeros  ─────────────────────────--
+##############################################################################
+zip_codes$zip              <- as.character(zip_codes$zip)
+demographics_attrs$zip_code <- as.character(demographics_attrs$zip_code)
+
+##############################################################################
+# 3.  Merge attributes onto ZIP polygons  ───────────────────────────────────-
+##############################################################################
+demo_merged <- zip_codes |>
+  left_join(demographics_attrs, by = c("zip" = "zip_code"))
+
+# demo_merged is now an sf object:
+#   • geometry from zip_codes
+#   • all columns from demographics_data_1 (except its old geometry)
+
+##############################################################################
+# 4.  (Optional) inspect the result
+##############################################################################
+print(st_geometry_type(demo_merged))  # should show "MULTIPOLYGON" etc.
+head(demo_merged)
+
+
+```
+```{r}
+##############################################################################
+# 0.  Packages (install the first time with install.packages())  ─────────────
+##############################################################################
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)   # nicer label placement
+library(viridis)   # colour scales
+
+##############################################################################
+# 1.  Ensure the data are sf and in lon/lat (EPSG 4326)  ─────────────────────
+##############################################################################
+demographics_data_1 <- st_as_sf(demographics_data_1)
+demographics_data_1 <- st_transform(demographics_data_1, 4326)
+
+##############################################################################
+# 2.  Pick out numeric variables to map  ─────────────────────────────────────
+##############################################################################
+reserved      <- c("geometry")          # skip the geometry column
+numeric_vars  <- names(demographics_data_1)[
+  sapply(demographics_data_1, is.numeric) &
+  !names(demographics_data_1) %in% reserved
+]
+
+##############################################################################
+# 3.  Helper: make one labelled map for a single variable  ───────────────────
+##############################################################################
+make_map <- function(var) {
+  
+  # Identify the 10 largest ZIPs for the given variable
+  top10 <- demographics_data_1 %>%
+    arrange(desc(.data[[var]])) %>%
+    slice_head(n = 10)
+  
+  ggplot(demographics_data_1) +
+    geom_sf(aes(fill = .data[[var]]), colour = NA) +
+    geom_sf_text(
+      data  = top10,
+      aes(label = zip_code),
+      size  = 3,
+      colour = "black"
+    ) +
+    scale_fill_viridis_c(option = "magma", na.value = "grey80",
+                         name = gsub("_", " ", var, fixed = TRUE)) +
+    labs(
+      title   = paste("Distribution of", gsub("_", " ", var), "by ZIP Code"),
+      caption = "Top 10 ZIP codes labelled"
+    ) +
+    theme_minimal()
+}
+
+##############################################################################
+# 4.  Generate and optionally save maps  ─────────────────────────────────────
+##############################################################################
+map_list <- setNames(vector("list", length(numeric_vars)), numeric_vars)
+
+for (v in numeric_vars) {
+  plot_obj <- make_map(v)
+  map_list[[v]] <- plot_obj      # store in a list for later inspection
+  
+  # Uncomment if you want PNG files (one per variable)
+  # ggsave(
+  #   filename = paste0("map_", v, ".png"),
+  #   plot     = plot_obj,
+  #   width = 8, height = 6, dpi = 300
+  # )
+}
+
+# Print the first map to the RStudio/console viewer as a preview
+map_list[[1]]
+
+```
+```{r}
+##############################################################################
+# 0.  Load packages  ─────────────────────────────────────────────────────────
+##############################################################################
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(classInt)
+library(showtext)
+
+# Load Times New Roman font (safe across systems)
+font_add("Times New Roman", regular = "Times New Roman")
+showtext_auto()
+
+##############################################################################
+# 1.  Prepare the Jenks breaks  ──────────────────────────────────────────────
+##############################################################################
+# Compute 5 Natural Breaks (Jenks) on total_population
+jenks_breaks <- classInt::classIntervals(
+  demo_merged$total_population,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Cut total_population into Jenks categories
+demo_merged <- demo_merged |>
+  mutate(total_population_class = cut(
+    total_population,
+    breaks = jenks_breaks,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 2.  Select the top 10 ZIPs by population  ──────────────────────────────────
+##############################################################################
+top10_zips <- demo_merged |>
+  arrange(desc(total_population)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 3.  Build the ggplot map  ──────────────────────────────────────────────────
+##############################################################################
+p <- ggplot(demo_merged) +
+  geom_sf(aes(fill = total_population), color = NA) +
+  
+  geom_sf_text(
+    data = top10_zips,
+    aes(label = zip),
+    family = "Times New Roman",
+    fontface = "bold",
+    size = 3.5,
+    color = "black"
+  ) +
+  
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Total Population"
+  ) +
+  
+  labs(
+    title = "Distribution of Total Population by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+  
+  theme_void(base_family = "Times New Roman") +
+  
+  theme(
+    plot.title = element_text(
+      family = "Times New Roman",
+      face = "bold",
+      size = 18,
+      hjust = 0.5     # Center the title
+    ),
+    legend.title = element_text(
+      family = "Times New Roman",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times New Roman"
+    )
+  )
+
+##############################################################################
+# 4.  Display the map  ───────────────────────────────────────────────────────
+##############################################################################
+print(p)
+
+```
+```{r}
+##############################################################################
+# 0. Load packages ───────────────────────────────────────────────────────────
+##############################################################################
+# install.packages(c("sf", "dplyr", "ggplot2", "ggrepel", "classInt")) # only first time
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(classInt)
+
+##############################################################################
+# 1. Drop geometry from demographics_data_1 and merge with zip_codes
+##############################################################################
+demographics_attrs <- demographics_data_1 |>
+  st_drop_geometry()
+
+# Make sure zip is character (keep leading zeros)
+zip_codes$zip              <- as.character(zip_codes$zip)
+demographics_attrs$zip_code <- as.character(demographics_attrs$zip_code)
+
+# Merge into a new sf object
+demo_merged <- zip_codes |>
+  left_join(demographics_attrs, by = c("zip" = "zip_code")) |>
+  st_transform(4326)
+
+##############################################################################
+# 2. Prepare Natural Jenks Breaks on total_population
+##############################################################################
+jenks_breaks <- classInt::classIntervals(
+  demo_merged$total_population,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column
+demo_merged <- demo_merged |>
+  mutate(total_population_class = cut(
+    total_population,
+    breaks = jenks_breaks,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 3. Select Top 10 ZIP Codes by Total Population
+##############################################################################
+top10_zips <- demo_merged |>
+  arrange(desc(total_population)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 4. Create Beautiful Map
+##############################################################################
+p <- ggplot(demo_merged) +
+  geom_sf(aes(fill = total_population), color = NA) +
+
+  geom_sf_text(
+    data = top10_zips,
+    aes(label = zip),
+    family = "Times",        # <-- safe font for all systems
+    fontface = "bold",
+    size = 3.5,
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Total Population"
+  ) +
+
+  labs(
+    title = "Distribution of Total Population by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5               # center the title
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 5. Print the Map
+##############################################################################
+print(p)
+```
+```{r}
+##############################################################################
+# 0. Load packages ───────────────────────────────────────────────────────────
+##############################################################################
+# install.packages(c("sf", "dplyr", "ggplot2", "ggrepel", "classInt")) # only first time
+library(sf)
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+library(classInt)
+
+##############################################################################
+# 1. Prepare Natural Jenks Breaks on median_income
+##############################################################################
+jenks_breaks_income <- classInt::classIntervals(
+  demo_merged$median_income,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column (optional, if needed later)
+demo_merged <- demo_merged |>
+  mutate(median_income_class = cut(
+    median_income,
+    breaks = jenks_breaks_income,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 2. Select Top 10 ZIP Codes by Median Income
+##############################################################################
+top10_income_zips <- demo_merged |>
+  arrange(desc(median_income)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 3. Create Beautiful Map for Median Income
+##############################################################################
+p_income <- ggplot(demo_merged) +
+  geom_sf(aes(fill = median_income), color = NA) +
+
+  geom_sf_text(
+    data = top10_income_zips,
+    aes(label = zip),
+    family = "Times",          # Use Times font
+    fontface = "plain",         # Not bold
+    size = 2,
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Median Income"
+  ) +
+
+  labs(
+    title = "Distribution of Median Income by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",             # Title is still bold
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 4. Print the Map
+##############################################################################
+print(p_income)
+```
+```{r}
+##############################################################################
+# 1. Prepare Natural Jenks Breaks on avg_household_size
+##############################################################################
+jenks_breaks_household <- classInt::classIntervals(
+  demo_merged$avg_household_size,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column (optional)
+demo_merged <- demo_merged |>
+  mutate(avg_household_size_class = cut(
+    avg_household_size,
+    breaks = jenks_breaks_household,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 2. Select Top 10 ZIP Codes by Average Household Size
+##############################################################################
+top10_household_zips <- demo_merged |>
+  arrange(desc(avg_household_size)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 3. Create Beautiful Map for Average Household Size
+##############################################################################
+p_household <- ggplot(demo_merged) +
+  geom_sf(aes(fill = avg_household_size), color = NA) +
+
+  geom_sf_text(
+    data = top10_household_zips,
+    aes(label = zip),
+    family = "Times",          # Times font
+    fontface = "plain",         # Plain text
+    size = 2.8,                 # Smaller label size
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Avg Household Size"
+  ) +
+
+  labs(
+    title = "Distribution of Average Household Size by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 4. Print the Map
+##############################################################################
+print(p_household)
+```
+```{r}
+##############################################################################
+# 1. Prepare Natural Jenks Breaks on gender_ratio
+##############################################################################
+jenks_breaks_gender <- classInt::classIntervals(
+  demo_merged$gender_ratio,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column (optional)
+demo_merged <- demo_merged |>
+  mutate(gender_ratio_class = cut(
+    gender_ratio,
+    breaks = jenks_breaks_gender,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 2. Select Top 10 ZIP Codes by Gender Ratio
+##############################################################################
+top10_gender_zips <- demo_merged |>
+  arrange(desc(gender_ratio)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 3. Create Beautiful Map for Gender Ratio
+##############################################################################
+p_gender <- ggplot(demo_merged) +
+  geom_sf(aes(fill = gender_ratio), color = NA) +
+
+  geom_sf_text(
+    data = top10_gender_zips,
+    aes(label = zip),
+    family = "Times",          # Times font
+    fontface = "plain",         # Plain text
+    size = 2.8,                 # Smaller label size
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Gender Ratio"
+  ) +
+
+  labs(
+    title = "Distribution of Gender Ratio by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 4. Print the Map
+##############################################################################
+print(p_gender)
+```
+
+```{r}
+##############################################################################
+# 1. Create Beautiful Map for Dominant Age Category (no labels)
+##############################################################################
+p_age_category <- ggplot(demo_merged) +
+  geom_sf(aes(fill = dominant_age_category), color = NA) +
+
+  scale_fill_brewer(
+    palette = "Set2",      # Nice distinct colors
+    na.value = "grey80",
+    name = "Dominant Age Category"
+  ) +
+
+  labs(
+    title = "Distribution of Dominant Age Category by ZIP Code",
+    caption = NULL         # No caption needed if no labels
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 2. Print the Map
+##############################################################################
+print(p_age_category)
+```
+
+```{r}
+##############################################################################
+# 1. Create Beautiful Map for Dominant Race (no labels)
+##############################################################################
+p_race_category <- ggplot(demo_merged) +
+  geom_sf(aes(fill = dominant_race), color = NA) +
+
+  scale_fill_brewer(
+    palette = "Set2",       # Distinct colors for categories
+    na.value = "grey80",
+    name = "Dominant Race"
+  ) +
+
+  labs(
+    title = "Distribution of Dominant Race by ZIP Code",
+    caption = NULL
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 2. Print the Map
+##############################################################################
+print(p_race_category)
+```
+
+```{r}
+##############################################################################
+# 0. Load necessary package
+##############################################################################
+library(readr)  # clean fast import (you can also use read.csv if you want)
+
+##############################################################################
+# 1. Set your file path and read the data
+##############################################################################
+# If you upload manually in RStudio, you can choose the file interactively:
+# (uncomment below if you want interactive)
+# file_path <- file.choose()
+
+# If the file is already in your working directory:
+file_path <- "/Users/zhixincao/Desktop/chicago_advertisement_scores(1).csv"
+
+# Read the CSV
+ad_scores <- read_csv(file_path)
+
+##############################################################################
+# 2. Inspect the data (optional)
+##############################################################################
+glimpse(ad_scores)  # clean overview
+head(ad_scores)     # first few rows
+colnames(ad_scores) # show all variable names
+```
+
+```{r}
+##############################################################################
+# 0. Load dplyr (if not already loaded)
+##############################################################################
+library(dplyr)
+
+##############################################################################
+# 1. Prepare keys (make sure both are character)
+##############################################################################
+demo_merged$zip   <- as.character(demo_merged$zip)
+ad_scores$zip_code <- as.character(ad_scores$zip_code)
+
+##############################################################################
+# 2. Merge ad_scores into demo_merged
+##############################################################################
+demo_merged_1 <- demo_merged |>
+  left_join(ad_scores, by = c("zip" = "zip_code"))
+
+##############################################################################
+# 3. Inspect the result (optional)
+##############################################################################
+glimpse(demo_merged_1)
+head(demo_merged_1)
+colnames(demo_merged_1)
+```
+```{r}
+##############################################################################
+# 1. Prepare Natural Jenks Breaks on Luxury Watch Score
+##############################################################################
+jenks_breaks_watch <- classInt::classIntervals(
+  demo_merged_1$Luxury_Watch_Score,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column (optional)
+demo_merged_1 <- demo_merged_1 |>
+  mutate(Luxury_Watch_Score_class = cut(
+    Luxury_Watch_Score,
+    breaks = jenks_breaks_watch,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 2. Select Top 10 ZIP Codes by Luxury Watch Score
+##############################################################################
+top10_watch_zips <- demo_merged_1 |>
+  arrange(desc(Luxury_Watch_Score)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 3. Create Map for Luxury Watch Score
+##############################################################################
+p_watch <- ggplot(demo_merged_1) +
+  geom_sf(aes(fill = Luxury_Watch_Score), color = NA) +
+
+  geom_sf_text(
+    data = top10_watch_zips,
+    aes(label = zip),
+    family = "Times",
+    fontface = "plain",
+    size = 2.8,
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Luxury Watch Score"
+  ) +
+
+  labs(
+    title = "Distribution of Luxury Watch Score by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 4. Prepare Natural Jenks Breaks on Budget Grocery Score
+##############################################################################
+jenks_breaks_grocery <- classInt::classIntervals(
+  demo_merged_1$Budget_Grocery_Score,
+  n = 5,
+  style = "jenks",
+  na.rm = TRUE
+)$brks
+
+# Create a Jenks classification column (optional)
+demo_merged_1 <- demo_merged_1 |>
+  mutate(Budget_Grocery_Score_class = cut(
+    Budget_Grocery_Score,
+    breaks = jenks_breaks_grocery,
+    include.lowest = TRUE,
+    dig.lab = 10
+  ))
+
+##############################################################################
+# 5. Select Top 10 ZIP Codes by Budget Grocery Score
+##############################################################################
+top10_grocery_zips <- demo_merged_1 |>
+  arrange(desc(Budget_Grocery_Score)) |>
+  slice_head(n = 10)
+
+##############################################################################
+# 6. Create Map for Budget Grocery Score
+##############################################################################
+p_grocery <- ggplot(demo_merged_1) +
+  geom_sf(aes(fill = Budget_Grocery_Score), color = NA) +
+
+  geom_sf_text(
+    data = top10_grocery_zips,
+    aes(label = zip),
+    family = "Times",
+    fontface = "plain",
+    size = 2.8,
+    color = "black"
+  ) +
+
+  scale_fill_gradient(
+    low = "white",
+    high = "red",
+    na.value = "grey80",
+    name = "Budget Grocery Score"
+  ) +
+
+  labs(
+    title = "Distribution of Budget Grocery Score by ZIP Code",
+    caption = "Top 10 ZIP codes labelled"
+  ) +
+
+  theme_void(base_family = "Times") +
+  theme(
+    plot.title = element_text(
+      family = "Times",
+      face = "bold",
+      size = 18,
+      hjust = 0.5
+    ),
+    legend.title = element_text(
+      family = "Times",
+      face = "bold"
+    ),
+    legend.text = element_text(
+      family = "Times"
+    )
+  )
+
+##############################################################################
+# 7. Print Both Maps
+##############################################################################
+print(p_watch)
+print(p_grocery)
+
+```
+
+
+
+
+
+
+
+
